@@ -1876,7 +1876,8 @@ static uint32_t test_exceptions_retw(DisasContext *dc, const OpcodeArg arg[], co
 
 static void translate_retw(DisasContext *dc, const OpcodeArg arg[], const uint32_t par[])
 {
-    TCGv_i32 tmp = tcg_const_i32(1);
+    TCGv_i32 tmp = tcg_temp_local_new_i32();
+    tcg_gen_movi_i32(tmp, 1);
     tcg_gen_shl_i32(tmp, tmp, cpu_SR[WINDOW_BASE]);
     tcg_gen_andc_i32(cpu_SR[WINDOW_START], cpu_SR[WINDOW_START], tmp);
     tcg_gen_movi_i32(tmp, dc->pc);
