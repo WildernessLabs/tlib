@@ -36,7 +36,9 @@ void HELPER(update_ccount)(CPUState *env)
     uint64_t now = tlib_get_cpu_time();
 
     env->ccount_time = now;
-    env->sregs[CCOUNT] = env->ccount_base + (uint32_t)((now - env->time_base) * env->config->clock_freq_khz / 1000);
+    /* tlib_get_cpu_time() returns CPU cycles from ComparingTimer at CPU frequency,
+     * so no frequency conversion is needed — the timer already counts in CCOUNT units. */
+    env->sregs[CCOUNT] = env->ccount_base + (uint32_t)(now - env->time_base);
 }
 
 void HELPER(wsr_ccount)(CPUState *env, uint32_t v)
@@ -57,8 +59,9 @@ void HELPER(update_ccompare)(CPUState *env, uint32_t i)
     env->sregs[INTSET] &= ~(1u << env->config->timerint[i]);
     HELPER(update_ccount)(env);
     dcc = (uint64_t)(env->sregs[CCOMPARE + i] - env->sregs[CCOUNT] - 1) + 1;
-    tlib_timer_mod(i, /*env->ccompare[i].timer,*/
-                   env->ccount_time + (dcc * 1000000) / env->config->clock_freq_khz);
+    /* tlib_get_cpu_time() returns CPU cycles, and dcc is in CPU cycles,
+     * so the target is simply ccount_time + dcc — no unit conversion needed. */
+    tlib_timer_mod(i, env->ccount_time + dcc);
     env->yield_needed = 1;
 }
 

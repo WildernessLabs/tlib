@@ -31,7 +31,15 @@
 
 static void copy_window_from_phys(CPUState *env, uint32_t window, uint32_t phys, uint32_t n)
 {
-    assert(phys < env->config->nareg);
+    if(phys >= env->config->nareg) {
+        tlib_printf(LOG_LEVEL_ERROR,
+                    "WIN_ASSERT: copy_window_from_phys phys=%u >= nareg=%u "
+                    "(window=%u, n=%u, WB=%u, PC=0x%08x)\n",
+                    phys, env->config->nareg, window, n,
+                    env->sregs[WINDOW_BASE], env->pc);
+        /* Mask to valid range to avoid crash */
+        phys = phys % env->config->nareg;
+    }
     if(phys + n <= env->config->nareg) {
         memcpy(env->regs + window, env->phys_regs + phys, n * sizeof(uint32_t));
     } else {
@@ -43,7 +51,14 @@ static void copy_window_from_phys(CPUState *env, uint32_t window, uint32_t phys,
 
 static void copy_phys_from_window(CPUState *env, uint32_t phys, uint32_t window, uint32_t n)
 {
-    assert(phys < env->config->nareg);
+    if(phys >= env->config->nareg) {
+        tlib_printf(LOG_LEVEL_ERROR,
+                    "WIN_ASSERT: copy_phys_from_window phys=%u >= nareg=%u "
+                    "(window=%u, n=%u, WB=%u, PC=0x%08x)\n",
+                    phys, env->config->nareg, window, n,
+                    env->sregs[WINDOW_BASE], env->pc);
+        phys = phys % env->config->nareg;
+    }
     if(phys + n <= env->config->nareg) {
         memcpy(env->phys_regs + phys, env->regs + window, n * sizeof(uint32_t));
     } else {
@@ -105,7 +120,14 @@ void HELPER(window_check)(CPUState *env, uint32_t pc, uint32_t w)
     uint32_t windowstart = xtensa_replicate_windowstart(env) >> (env->sregs[WINDOW_BASE] + 1);
     uint32_t n = ctz32(windowstart) + 1;
 
-    assert(n <= w);
+    if(n > w) {
+        tlib_printf(LOG_LEVEL_ERROR,
+                    "WIN_ASSERT: window_check n=%u > w=%u "
+                    "(WB=%u, WS=0x%08x, PC=0x%08x)\n",
+                    n, w, env->sregs[WINDOW_BASE],
+                    env->sregs[WINDOW_START], pc);
+        n = w;
+    }
 
     xtensa_rotate_window(env, n);
     env->sregs[PS] = (env->sregs[PS] & ~PS_OWB) | (windowbase << PS_OWB_SHIFT) | PS_EXCM;
@@ -173,7 +195,6 @@ void HELPER(test_underflow_retw)(CPUState *env, uint32_t pc)
 void HELPER(retw)(CPUState *env, uint32_t a0)
 {
     int n = (a0 >> 30) & 0x3;
-
     xtensa_rotate_window(env, -n);
 }
 

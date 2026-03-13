@@ -123,7 +123,8 @@ void HELPER(waiti)(CPUState *env, uint32_t pc, uint32_t intlevel)
         return;
     }
 
-    HELPER(exception)(env, EXCP_HLT);
+    /* Don't halt — without timer interrupts, EXCP_HLT pauses the machine forever.
+     * Instead, just return and let the CPU continue to the next instruction. */
 }
 
 void HELPER(check_interrupts)(CPUState *env)

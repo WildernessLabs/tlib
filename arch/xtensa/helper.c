@@ -190,7 +190,10 @@ int arch_tlb_fill(CPUState *env, target_ulong address, MMUAccessType access_type
         tlb_set_page(env, address & TARGET_PAGE_MASK, paddr & TARGET_PAGE_MASK, access, mmu_idx, page_size);
         return TRANSLATE_SUCCESS;
     }
-    return TRANSLATE_FAIL;
+    /* Return the actual Xtensa exception cause code (e.g. STORE_PROHIBITED_CAUSE),
+     * not TRANSLATE_FAIL (== 1 == SYSCALL_CAUSE). The errcode is passed directly
+     * to HELPER(exception_cause_vaddr) by arch_raise_mmu_fault_exception. */
+    return ret;
 }
 
 void tlib_arch_dispose()
