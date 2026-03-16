@@ -262,6 +262,7 @@ void xtensa_cpu_set_irq_pending_bit(CPUState *env, uint32_t irq, uint32_t active
     } else if(env->config->interrupt[irq].inttype == INTTYPE_LEVEL) {
         env->sregs[INTSET] &= ~irq_bit;
     }
+    check_interrupts(env);
 }
 
 int process_interrupt(int interrupt_request, CPUState *env)
