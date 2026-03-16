@@ -1906,7 +1906,8 @@ static void translate_rfi(DisasContext *dc, const OpcodeArg arg[], const uint32_
 
 static void translate_rfw(DisasContext *dc, const OpcodeArg arg[], const uint32_t par[])
 {
-    TCGv_i32 tmp = tcg_const_i32(1);
+    TCGv_i32 tmp = tcg_temp_local_new_i32();
+    tcg_gen_movi_i32(tmp, 1);
 
     tcg_gen_andi_i32(cpu_SR[PS], cpu_SR[PS], ~PS_EXCM);
     tcg_gen_shl_i32(tmp, tmp, cpu_SR[WINDOW_BASE]);

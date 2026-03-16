@@ -102,7 +102,25 @@ void xtensa_rotate_window(CPUState *env, uint32_t delta)
 
 void HELPER(sync_windowbase)(CPUState *env)
 {
+    uint32_t old_wb = env->sregs[WINDOW_BASE];
+    uint32_t new_wb = windowbase_bound(env->windowbase_next, env);
+
     xtensa_rotate_window_abs(env, env->windowbase_next);
+
+    /* Detect when sync_windowbase produces a zero PC or return address
+     * after a window rotation that wraps the physical register file. */
+    if(new_wb < old_wb || new_wb >= (env->config->nareg / 4) - 2) {
+        /* Check if a0 (return address) in the new window is zero */
+        if(env->regs[0] == 0) {
+            tlib_printf(LOG_LEVEL_WARNING,
+                        "sync_windowbase: a0=0 after rotation "
+                        "(old_WB=%u, new_WB=%u, WS=0x%08x, PC=0x%08x, "
+                        "a1=0x%08x, EPC1=0x%08x, PS=0x%08x)\n",
+                        old_wb, new_wb, env->sregs[WINDOW_START],
+                        env->pc, env->regs[1], env->sregs[EPC1],
+                        env->sregs[PS]);
+        }
+    }
 }
 
 void HELPER(entry)(CPUState *env, uint32_t pc, uint32_t s, uint32_t imm)
@@ -121,15 +139,44 @@ void HELPER(window_check)(CPUState *env, uint32_t pc, uint32_t w)
     uint32_t n = ctz32(windowstart) + 1;
 
     if(n > w) {
-        tlib_printf(LOG_LEVEL_ERROR,
-                    "WIN_ASSERT: window_check n=%u > w=%u "
-                    "(WB=%u, WS=0x%08x, PC=0x%08x)\n",
+        /* Runtime WINDOWSTART state shows no overflow is needed (the nearest
+         * occupied window is farther than w positions away).  This can happen
+         * if a cached TB's static window check is stale.  Do NOT clamp n and
+         * proceed — that would trigger a spurious overflow that clears a
+         * WINDOWSTART bit for an in-use window, corrupting register state.
+         * Instead, restart the CPU loop so a fresh TB with correct flags is
+         * generated. */
+        tlib_printf(LOG_LEVEL_WARNING,
+                    "window_check: n=%u > w=%u, no overflow needed "
+                    "(WB=%u, WS=0x%08x, PC=0x%08x). Restarting TB lookup.\n",
                     n, w, env->sregs[WINDOW_BASE],
                     env->sregs[WINDOW_START], pc);
-        n = w;
+        env->pc = pc;
+        cpu_loop_exit(env);
+    }
+
+    /* Log state before/after rotation when near the wrap-around boundary */
+    if(windowbase >= (env->config->nareg / 4) - 3) {
+        uint32_t ret_phys_idx = windowbase * 4 + 4;
+        if(ret_phys_idx >= env->config->nareg) ret_phys_idx -= env->config->nareg;
+        tlib_printf(LOG_LEVEL_WARNING,
+                    "window_check PRE-ROTATE: WB=%u, n=%u, w=%u, WS=0x%08x, PC=0x%08x, "
+                    "regs[4]=0x%08x (phys[%u]), type=%d\n",
+                    windowbase, n, w, env->sregs[WINDOW_START], pc,
+                    env->regs[4], ret_phys_idx, ctz32(windowstart >> n));
     }
 
     xtensa_rotate_window(env, n);
+
+    if(windowbase >= (env->config->nareg / 4) - 3) {
+        tlib_printf(LOG_LEVEL_WARNING,
+                    "window_check POST-ROTATE: new_WB=%u, regs[0]=0x%08x, "
+                    "phys[%u]=0x%08x, phys[%u]=0x%08x\n",
+                    env->sregs[WINDOW_BASE], env->regs[0],
+                    windowbase * 4, env->phys_regs[windowbase * 4],
+                    windowbase * 4 + 4, env->phys_regs[(windowbase * 4 + 4) % env->config->nareg]);
+    }
+
     env->sregs[PS] = (env->sregs[PS] & ~PS_OWB) | (windowbase << PS_OWB_SHIFT) | PS_EXCM;
     env->sregs[EPC1] = env->pc = pc;
 
@@ -161,7 +208,19 @@ void HELPER(test_ill_retw)(CPUState *env, uint32_t pc)
         m = 3;
     }
 
-    if(n == 0 || (m != 0 && m != n)) {
+    if(n == 0 && m != 0) {
+        /* a0 bits 30-31 are zero, but WINDOWSTART shows a caller at distance m.
+         * This happens when WindowOverflow8/12 uses a0 as scratch (l32e a0, a1, -12)
+         * and the stack base save area was uninitialized (zero).  On real hardware
+         * the stack would have a valid caller-SP with bits 30-31 encoding the call
+         * type.  Rather than crash, fix up a0 to use the correct n derived from m,
+         * allowing the underflow handler to restore the real register values. */
+        tlib_printf(LOG_LEVEL_WARNING,
+                    "retw: a0=0x%08x has n=0 but m=%d (WB=%u, WS=0x%08x, PC=0x%08x). "
+                    "Fixing a0 bits 30-31 to match m.\n",
+                    env->regs[0], m, windowbase, windowstart, pc);
+        env->regs[0] = (env->regs[0] & 0x3FFFFFFF) | ((uint32_t)m << 30);
+    } else if(n == 0 || (m != 0 && m != n)) {
         tlib_printf(LOG_LEVEL_ERROR,
                     "Illegal retw instruction(pc = %08x), "
                     "PS = %08x, m = %d, n = %d\n",
@@ -200,7 +259,20 @@ void HELPER(retw)(CPUState *env, uint32_t a0)
 
 void xtensa_restore_owb(CPUState *env)
 {
-    xtensa_rotate_window_abs(env, (env->sregs[PS] & PS_OWB) >> PS_OWB_SHIFT);
+    uint32_t owb = (env->sregs[PS] & PS_OWB) >> PS_OWB_SHIFT;
+    uint32_t cur_wb = env->sregs[WINDOW_BASE];
+
+    /* Log rfwo state when near wrap-around to diagnose a0=0 corruption */
+    if(cur_wb >= (env->config->nareg / 4) - 3 || owb >= (env->config->nareg / 4) - 3) {
+        uint32_t ret_phys_idx = (owb * 4 + 4) % env->config->nareg;
+        tlib_printf(LOG_LEVEL_WARNING,
+                    "restore_owb: cur_WB=%u → OWB=%u, regs[0]=0x%08x, "
+                    "phys[%u]=0x%08x (will become a4 at OWB), PC=0x%08x\n",
+                    cur_wb, owb, env->regs[0],
+                    ret_phys_idx, env->phys_regs[ret_phys_idx], env->pc);
+    }
+
+    xtensa_rotate_window_abs(env, owb);
 }
 
 void HELPER(restore_owb)(CPUState *env)
