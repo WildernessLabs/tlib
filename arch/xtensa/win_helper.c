@@ -280,6 +280,24 @@ void HELPER(restore_owb)(CPUState *env)
     xtensa_restore_owb(env);
 }
 
+void HELPER(restore_owb_no_phys_sync)(CPUState *env)
+{
+    /* Used by rfwo (window overflow return).  Skip sync_phys_from_window so
+     * the overflow handler's scratch register modifications (e.g., WOVF8's
+     * l32e a0, a1, -12 which uses a0 as scratch) do NOT propagate to
+     * phys_regs.  This preserves the caller's register values in phys_regs
+     * — the overflow handler saved the original values to memory via s32e,
+     * and rfwo clears the WS bit marking the overflow window as not-live.
+     * The underflow handler will restore from memory when needed.
+     *
+     * Without this, the scratch value overwrites phys_regs at a position
+     * shared with the caller's return address (due to the circular register
+     * file), corrupting the caller's registers. */
+    uint32_t owb = (env->sregs[PS] & PS_OWB) >> PS_OWB_SHIFT;
+    env->sregs[WINDOW_BASE] = windowbase_bound(owb, env);
+    xtensa_sync_window_from_phys(env);
+}
+
 void HELPER(movsp)(CPUState *env, uint32_t pc)
 {
     if((env->sregs[WINDOW_START] &

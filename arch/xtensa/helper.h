@@ -12,6 +12,7 @@ DEF_HELPER_2(test_underflow_retw, void, env, i32)
 DEF_HELPER_2(retw, void, env, i32)
 DEF_HELPER_3(window_check, noreturn, env, i32, i32)
 DEF_HELPER_1(restore_owb, void, env)
+DEF_HELPER_1(restore_owb_no_phys_sync, void, env)
 DEF_HELPER_2(movsp, void, env, i32)
 DEF_HELPER_1(simcall, void, env)
 

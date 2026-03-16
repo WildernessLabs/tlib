@@ -1919,7 +1919,15 @@ static void translate_rfw(DisasContext *dc, const OpcodeArg arg[], const uint32_
     }
 
     tcg_temp_free(tmp);
-    gen_helper_restore_owb(cpu_env);
+    if(par[0]) {
+        /* rfwo: skip sync_phys_from_window so the overflow handler's scratch
+         * register modifications don't corrupt the caller's phys_regs. */
+        gen_helper_restore_owb_no_phys_sync(cpu_env);
+    } else {
+        /* rfwu: full sync needed — underflow handler loaded registers from
+         * memory that must be written back to phys_regs. */
+        gen_helper_restore_owb(cpu_env);
+    }
     gen_jump(dc, cpu_SR[EPC1]);
 }
 
