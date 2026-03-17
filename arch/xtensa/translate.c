@@ -1475,6 +1475,23 @@ static void translate_entry(DisasContext *dc, const OpcodeArg arg[], const uint3
     tcg_temp_free(imm);
     tcg_temp_free(s);
     tcg_temp_free(pc);
+
+    /* HELPER(entry) now performs the window rotation (modifying env->regs
+     * directly in C code).  TCG fixed globals (cpu_R[0..15]) still hold
+     * stale pre-rotation values in their host registers.  gen_exit_tb
+     * would write these stale values back to env->regs, overwriting the
+     * correct post-rotation values.
+     *
+     * Fix: explicitly reload all cpu_R globals from env->regs.  This
+     * forces the TCG register allocator to read the post-rotation values
+     * from memory into the host registers, so gen_exit_tb writes back
+     * the correct values. */
+    {
+        int i;
+        for(i = 0; i < 16; i++) {
+            tcg_gen_ld_i32(cpu_R[i], cpu_env, offsetof(CPUState, regs[i]));
+        }
+    }
 }
 
 static void translate_extui(DisasContext *dc, const OpcodeArg arg[], const uint32_t par[])

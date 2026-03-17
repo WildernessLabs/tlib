@@ -105,8 +105,12 @@ void HELPER(sync_windowbase)(CPUState *env)
     uint32_t old_wb = env->sregs[WINDOW_BASE];
     uint32_t new_wb = windowbase_bound(env->windowbase_next, env);
 
-    /* Debug: trace sync_windowbase when callinc=2 and new_wb != old_wb
-     * to catch the spi_slave_hal_prepare_data entry */
+    /* Skip if the rotation was already done (e.g., by HELPER(entry)). */
+    if(old_wb == new_wb) {
+        return;
+    }
+
+    /* Debug: trace sync_windowbase when callinc=2 and new_wb != old_wb */
     {
         int callinc = (env->sregs[PS] & PS_CALLINC) >> PS_CALLINC_SHIFT;
         if(callinc == 2 && new_wb != old_wb) {
@@ -148,6 +152,28 @@ void HELPER(entry)(CPUState *env, uint32_t pc, uint32_t s, uint32_t imm)
     env->regs[(callinc << 2) | (s & 3)] = env->regs[s] - imm;
     env->windowbase_next = env->sregs[WINDOW_BASE] + callinc;
     env->sregs[WINDOW_START] |= windowstart_bit(env->windowbase_next, env);
+
+    if(pc >= 0x4009f000 && pc <= 0x4009f100) {
+        tlib_printf(LOG_LEVEL_ERROR,
+                    "HELPER(entry) @SPI: pc=0x%08x callinc=%d, regs[2]=0x%08x regs[10]=0x%08x WB=%u\n",
+                    pc, callinc, env->regs[2], env->regs[10], env->sregs[WINDOW_BASE]);
+    }
+
+    /* Perform the window rotation here rather than in a separate
+     * sync_windowbase helper call.  When sync_windowbase was a separate
+     * helper, gen_exit_tb would write stale pre-rotation TCG global values
+     * (cached in host registers from the TB start) over the post-rotation
+     * values that sync_windowbase set in env->regs.  By doing the rotation
+     * in the same helper as the register setup, all env->regs modifications
+     * are complete before TCG globals are synced back, and gen_exit_tb
+     * won't overwrite them. */
+    xtensa_rotate_window_abs(env, env->windowbase_next);
+
+    if(pc == 0x4009f028) {
+        tlib_printf(LOG_LEVEL_ERROR,
+                    "HELPER(entry) @PD: post-rotate regs[2]=0x%08x WB=%u\n",
+                    env->regs[2], env->sregs[WINDOW_BASE]);
+    }
 }
 
 void HELPER(window_check)(CPUState *env, uint32_t pc, uint32_t w)
