@@ -67,18 +67,6 @@ void HELPER(exception_cause)(CPUState *env, uint32_t pc, uint32_t cause)
 {
     uint32_t vector;
 
-    if(pc == 0) {
-        tlib_printf(LOG_LEVEL_ERROR,
-                    "exception_cause at PC=0! cause=%u, WB=%u, WS=0x%08x, "
-                    "PS=0x%08x, EPC1=0x%08x, a0=0x%08x, a1=0x%08x, "
-                    "EXCM=%u, EXCCAUSE=%u\n",
-                    cause, env->sregs[WINDOW_BASE], env->sregs[WINDOW_START],
-                    env->sregs[PS], env->sregs[EPC1],
-                    env->regs[0], env->regs[1],
-                    (env->sregs[PS] & PS_EXCM) ? 1 : 0,
-                    env->sregs[EXCCAUSE]);
-    }
-
     env->pc = pc;
     if(env->sregs[PS] & PS_EXCM) {
         if(env->config->ndepc) {

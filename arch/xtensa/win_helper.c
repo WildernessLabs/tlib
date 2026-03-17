@@ -110,39 +110,7 @@ void HELPER(sync_windowbase)(CPUState *env)
         return;
     }
 
-    /* Debug: trace sync_windowbase when callinc=2 and new_wb != old_wb */
-    {
-        int callinc = (env->sregs[PS] & PS_CALLINC) >> PS_CALLINC_SHIFT;
-        if(callinc == 2 && new_wb != old_wb) {
-            uint32_t phys_idx = old_wb * 4 + 10;
-            if(phys_idx >= env->config->nareg) phys_idx -= env->config->nareg;
-            tlib_printf(LOG_LEVEL_ERROR,
-                        "sync_windowbase callinc=2: old_WB=%u new_WB=%u "
-                        "regs[2]=0x%08x regs[10]=0x%08x phys[%u]=0x%08x "
-                        "PC=0x%08x next=%u\n",
-                        old_wb, new_wb,
-                        env->regs[2], env->regs[10],
-                        phys_idx, env->phys_regs[phys_idx],
-                        env->pc, env->windowbase_next);
-        }
-    }
-
     xtensa_rotate_window_abs(env, env->windowbase_next);
-
-    /* Detect when sync_windowbase produces a zero PC or return address
-     * after a window rotation that wraps the physical register file. */
-    if(new_wb < old_wb || new_wb >= (env->config->nareg / 4) - 2) {
-        /* Check if a0 (return address) in the new window is zero */
-        if(env->regs[0] == 0) {
-            tlib_printf(LOG_LEVEL_WARNING,
-                        "sync_windowbase: a0=0 after rotation "
-                        "(old_WB=%u, new_WB=%u, WS=0x%08x, PC=0x%08x, "
-                        "a1=0x%08x, EPC1=0x%08x, PS=0x%08x)\n",
-                        old_wb, new_wb, env->sregs[WINDOW_START],
-                        env->pc, env->regs[1], env->sregs[EPC1],
-                        env->sregs[PS]);
-        }
-    }
 }
 
 void HELPER(entry)(CPUState *env, uint32_t pc, uint32_t s, uint32_t imm)
@@ -153,11 +121,6 @@ void HELPER(entry)(CPUState *env, uint32_t pc, uint32_t s, uint32_t imm)
     env->windowbase_next = env->sregs[WINDOW_BASE] + callinc;
     env->sregs[WINDOW_START] |= windowstart_bit(env->windowbase_next, env);
 
-    if(pc >= 0x4009f000 && pc <= 0x4009f100) {
-        tlib_printf(LOG_LEVEL_ERROR,
-                    "HELPER(entry) @SPI: pc=0x%08x callinc=%d, regs[2]=0x%08x regs[10]=0x%08x WB=%u\n",
-                    pc, callinc, env->regs[2], env->regs[10], env->sregs[WINDOW_BASE]);
-    }
 
     /* Perform the window rotation here rather than in a separate
      * sync_windowbase helper call.  When sync_windowbase was a separate
@@ -168,12 +131,6 @@ void HELPER(entry)(CPUState *env, uint32_t pc, uint32_t s, uint32_t imm)
      * are complete before TCG globals are synced back, and gen_exit_tb
      * won't overwrite them. */
     xtensa_rotate_window_abs(env, env->windowbase_next);
-
-    if(pc == 0x4009f028) {
-        tlib_printf(LOG_LEVEL_ERROR,
-                    "HELPER(entry) @PD: post-rotate regs[2]=0x%08x WB=%u\n",
-                    env->regs[2], env->sregs[WINDOW_BASE]);
-    }
 }
 
 void HELPER(window_check)(CPUState *env, uint32_t pc, uint32_t w)
@@ -199,27 +156,7 @@ void HELPER(window_check)(CPUState *env, uint32_t pc, uint32_t w)
         cpu_loop_exit(env);
     }
 
-    /* Log state before/after rotation when near the wrap-around boundary */
-    if(windowbase >= (env->config->nareg / 4) - 3) {
-        uint32_t ret_phys_idx = windowbase * 4 + 4;
-        if(ret_phys_idx >= env->config->nareg) ret_phys_idx -= env->config->nareg;
-        tlib_printf(LOG_LEVEL_WARNING,
-                    "window_check PRE-ROTATE: WB=%u, n=%u, w=%u, WS=0x%08x, PC=0x%08x, "
-                    "regs[4]=0x%08x (phys[%u]), type=%d\n",
-                    windowbase, n, w, env->sregs[WINDOW_START], pc,
-                    env->regs[4], ret_phys_idx, ctz32(windowstart >> n));
-    }
-
     xtensa_rotate_window(env, n);
-
-    if(windowbase >= (env->config->nareg / 4) - 3) {
-        tlib_printf(LOG_LEVEL_WARNING,
-                    "window_check POST-ROTATE: new_WB=%u, regs[0]=0x%08x, "
-                    "phys[%u]=0x%08x, phys[%u]=0x%08x\n",
-                    env->sregs[WINDOW_BASE], env->regs[0],
-                    windowbase * 4, env->phys_regs[windowbase * 4],
-                    windowbase * 4 + 4, env->phys_regs[(windowbase * 4 + 4) % env->config->nareg]);
-    }
 
     env->sregs[PS] = (env->sregs[PS] & ~PS_OWB) | (windowbase << PS_OWB_SHIFT) | PS_EXCM;
     env->sregs[EPC1] = env->pc = pc;
@@ -304,18 +241,6 @@ void HELPER(retw)(CPUState *env, uint32_t a0)
 void xtensa_restore_owb(CPUState *env)
 {
     uint32_t owb = (env->sregs[PS] & PS_OWB) >> PS_OWB_SHIFT;
-    uint32_t cur_wb = env->sregs[WINDOW_BASE];
-
-    /* Log rfwo state when near wrap-around to diagnose a0=0 corruption */
-    if(cur_wb >= (env->config->nareg / 4) - 3 || owb >= (env->config->nareg / 4) - 3) {
-        uint32_t ret_phys_idx = (owb * 4 + 4) % env->config->nareg;
-        tlib_printf(LOG_LEVEL_WARNING,
-                    "restore_owb: cur_WB=%u → OWB=%u, regs[0]=0x%08x, "
-                    "phys[%u]=0x%08x (will become a4 at OWB), PC=0x%08x\n",
-                    cur_wb, owb, env->regs[0],
-                    ret_phys_idx, env->phys_regs[ret_phys_idx], env->pc);
-    }
-
     xtensa_rotate_window_abs(env, owb);
 }
 
