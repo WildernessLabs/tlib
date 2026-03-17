@@ -105,6 +105,24 @@ void HELPER(sync_windowbase)(CPUState *env)
     uint32_t old_wb = env->sregs[WINDOW_BASE];
     uint32_t new_wb = windowbase_bound(env->windowbase_next, env);
 
+    /* Debug: trace sync_windowbase when callinc=2 and new_wb != old_wb
+     * to catch the spi_slave_hal_prepare_data entry */
+    {
+        int callinc = (env->sregs[PS] & PS_CALLINC) >> PS_CALLINC_SHIFT;
+        if(callinc == 2 && new_wb != old_wb) {
+            uint32_t phys_idx = old_wb * 4 + 10;
+            if(phys_idx >= env->config->nareg) phys_idx -= env->config->nareg;
+            tlib_printf(LOG_LEVEL_ERROR,
+                        "sync_windowbase callinc=2: old_WB=%u new_WB=%u "
+                        "regs[2]=0x%08x regs[10]=0x%08x phys[%u]=0x%08x "
+                        "PC=0x%08x next=%u\n",
+                        old_wb, new_wb,
+                        env->regs[2], env->regs[10],
+                        phys_idx, env->phys_regs[phys_idx],
+                        env->pc, env->windowbase_next);
+        }
+    }
+
     xtensa_rotate_window_abs(env, env->windowbase_next);
 
     /* Detect when sync_windowbase produces a zero PC or return address

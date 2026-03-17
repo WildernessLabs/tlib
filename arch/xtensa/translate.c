@@ -355,7 +355,8 @@ static void gen_jumpi(DisasContext *dc, uint32_t dest, int slot)
 
 static void gen_callw_slot(DisasContext *dc, int callinc, TCGv_i32 dest, int slot)
 {
-    TCGv_i32 tcallinc = tcg_const_i32(callinc);
+    TCGv_i32 tcallinc = tcg_temp_local_new_i32();
+    tcg_gen_movi_i32(tcallinc, callinc);
 
     tcg_gen_deposit_i32(cpu_SR[PS], cpu_SR[PS], tcallinc, PS_CALLINC_SHIFT, PS_CALLINC_LEN);
     tcg_temp_free(tcallinc);
@@ -1375,7 +1376,8 @@ static void translate_call0(DisasContext *dc, const OpcodeArg arg[], const uint3
 
 static void translate_callw(DisasContext *dc, const OpcodeArg arg[], const uint32_t par[])
 {
-    TCGv_i32 tmp = tcg_const_i32(arg[0].imm);
+    TCGv_i32 tmp = tcg_temp_local_new_i32();
+    tcg_gen_movi_i32(tmp, arg[0].imm);
     gen_callw_slot(dc, par[0], tmp, adjust_jump_slot(dc, arg[0].imm, 0));
     tcg_temp_free(tmp);
 }
