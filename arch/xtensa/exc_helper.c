@@ -123,8 +123,11 @@ void HELPER(waiti)(CPUState *env, uint32_t pc, uint32_t intlevel)
         return;
     }
 
-    /* Don't halt — without timer interrupts, EXCP_HLT pauses the machine forever.
-     * Instead, just return and let the CPU continue to the next instruction. */
+    /* Halt until an interrupt arrives — same as ARM WFI. The CCOMPARE0 timer
+     * fires at 100Hz (FreeRTOS tick), so the CPU won't sleep forever. */
+    env->exception_index = EXCP_HLT;
+    env->wfi = 1;
+    cpu_loop_exit(env);
 }
 
 void HELPER(check_interrupts)(CPUState *env)

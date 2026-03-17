@@ -1454,7 +1454,11 @@ static void translate_diwbuip(DisasContext *dc, const OpcodeArg arg[], const uin
 static uint32_t test_exceptions_entry(DisasContext *dc, const OpcodeArg arg[], const uint32_t par[])
 {
     if(arg[0].imm > 3 || !dc->cwoe) {
-        tlib_printf(LOG_LEVEL_ERROR, "Illegal entry instruction(pc = %08x)\n", dc->pc);
+        tlib_printf(LOG_LEVEL_ERROR,
+                    "Illegal entry instruction(pc = %08x, cwoe=%d, callinc=%d, "
+                    "window=%d, imm=%d, tb_flags=0x%08x)\n",
+                    dc->pc, dc->cwoe, dc->callinc, dc->window,
+                    arg[0].imm, dc->base.tb->flags);
         return XTENSA_OP_ILL;
     } else {
         return 0;
@@ -1468,9 +1472,12 @@ static uint32_t test_overflow_entry(DisasContext *dc, const OpcodeArg arg[], con
 
 static void translate_entry(DisasContext *dc, const OpcodeArg arg[], const uint32_t par[])
 {
-    TCGv_i32 pc = tcg_const_i32(dc->pc);
-    TCGv_i32 s = tcg_const_i32(arg[0].imm);
-    TCGv_i32 imm = tcg_const_i32(arg[1].imm);
+    TCGv_i32 pc = tcg_temp_local_new_i32();
+    TCGv_i32 s = tcg_temp_local_new_i32();
+    TCGv_i32 imm = tcg_temp_local_new_i32();
+    tcg_gen_movi_i32(pc, dc->pc);
+    tcg_gen_movi_i32(s, arg[0].imm);
+    tcg_gen_movi_i32(imm, arg[1].imm);
     gen_helper_entry(cpu_env, pc, s, imm);
     tcg_temp_free(imm);
     tcg_temp_free(s);
